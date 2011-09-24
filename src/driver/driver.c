@@ -328,7 +328,7 @@ static void usage() {
 	printf("-h    <prints help information>                    \n");
 	printf("-m    <Memory in MB>           default <64MB>      \n");
 	printf("-p    <port number>            default <11211>     \n");
-	printf("-l    <interface>              default <0.0.0.0>   \n");
+	printf("-l    <ip address>             default <0.0.0.0>   \n");
 	printf("-d    <scripts directory>      default <./scripts> \n");
 	printf("-e    <enable virtual keys>    default <Disabled>  \n");
 	printf("-i    <IO Memory Cache in MB>  default <16MB>      \n");
@@ -403,13 +403,13 @@ int main(int argc, char** argv) {
 	IfTrue(ENV.chunkpool, ERR, "Error creating chunkpool for size %d", (ENV.pageCount * 4096));
 
 	ENV.base        = event_base_new();
-	ENV.server      = connectionCreate(ENV.port, createGlobalConnectionHandler());
-	IfTrue(ENV.server, ERR, "Error opening port %d", ENV.port);
+	ENV.server      = connectionCreate(ENV.port, ENV.interface, createGlobalConnectionHandler());
+	IfTrue(ENV.server, ERR, "Error opening %s port %d", ENV.interface, ENV.port);
 
 	ENV.hashMap     = hashMapCreate(cacheItemGetHashEntryAPI(ENV.chunkpool));
 	IfTrue(ENV.server, ERR, "Error creating hashMap");
 
-	ENV.runnable    = luaRunnableCreate(ENV.scriptsDirectory);
+	ENV.runnable    = luaRunnableCreate(ENV.scriptsDirectory, ENV.enableVirtualKeys);
 	IfTrue(ENV.runnable, ERR, "Error setting up lua environment [%s]", ENV.scriptsDirectory);
 
 	connectionWaitForRead(ENV.server, ENV.base);

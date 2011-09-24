@@ -13,7 +13,7 @@ typedef struct {
 	void (*readAvailable)(connection_t connection);
 } connectionHandler_t;
 
-connection_t  connectionCreate(u_int16_t port, connectionHandler_t* handler);
+connection_t  connectionCreate(u_int16_t port,  char* ipAddress, connectionHandler_t* handler);
 void          connectionClose(connection_t conn);
 int           connectionRead(connection_t conn, fallocator_t fallocator, dataStream_t dataStream, u_int32_t maxBytesToRead, u_int32_t* bytesRead);
 int           connectionWrite(connection_t conn, fallocator_t fallocator, dataStream_t dataStream, u_int32_t maxBytesToWrite, u_int32_t* bytesWritten);

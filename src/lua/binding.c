@@ -497,7 +497,7 @@ static int loadLuaFile(luaRunnableImpl_t* pRunnable, char* fileName) {
 	return 0;
 }
 
-static int loadDirectory (luaRunnableImpl_t* pRunnable, char* dir_path) {
+static int loadDirectory (luaRunnableImpl_t* pRunnable, char* dir_path, int enableVirtualKey) {
 	int            addSlash = dir_path[strlen(dir_path) -1] != '/';
     struct dirent *dp       = 0;
     DIR           *dir      = opendir(dir_path);
@@ -512,16 +512,17 @@ static int loadDirectory (luaRunnableImpl_t* pRunnable, char* dir_path) {
     IfTrue(tmp, ERR, "Error allocating memory");
 	IfTrue( 0 == loadLuaFile(pRunnable, tmp), ERR, "Error loading file %s", tmp);
 	free(tmp); tmp = 0;
-
-	while ((dp = readdir(dir)) != NULL) {
-		tmp = path_cat(dir_path, dp->d_name, addSlash);
-		IfTrue(tmp, ERR, "Error allocating memory");
-		if (isLuaFile(tmp) && (!isCoreOrConfigFile(tmp)) ) {
-			IfTrue( 0 == loadLuaFile(pRunnable, tmp), ERR, "Error loading file %s", tmp);
-			LOG(INFO, "Loaded file [%s]", tmp);
+	if (enableVirtualKey) {
+		while ((dp = readdir(dir)) != NULL) {
+			tmp = path_cat(dir_path, dp->d_name, addSlash);
+			IfTrue(tmp, ERR, "Error allocating memory");
+			if (isLuaFile(tmp) && (!isCoreOrConfigFile(tmp)) ) {
+				IfTrue( 0 == loadLuaFile(pRunnable, tmp), ERR, "Error loading file %s", tmp);
+				LOG(INFO, "Loaded file [%s]", tmp);
+			}
+			free(tmp);
+			tmp = 0;
 		}
-		free(tmp);
-		tmp = 0;
 	}
 	goto OnSuccess;
 OnError:
@@ -535,8 +536,6 @@ OnSuccess:
 	}
 	return 0;
 }
-
-
 
 
 static void* fallocatorBasedAlloc (void *ud, void *ptr, size_t osize, size_t nsize) {
@@ -565,7 +564,7 @@ static void* fallocatorBasedAlloc (void *ud, void *ptr, size_t osize, size_t nsi
 }
 
 
-luaRunnable_t luaRunnableCreate(char* directory) {
+luaRunnable_t luaRunnableCreate(char* directory, int enableVirtualKey) {
 	luaRunnableImpl_t* pRunnable = ALLOCATE_1(luaRunnableImpl_t);
 	pRunnable->fallocator = fallocatorCreate();
 	pRunnable->luaState = lua_newstate(fallocatorBasedAlloc, pRunnable->fallocator);
@@ -584,7 +583,7 @@ luaRunnable_t luaRunnableCreate(char* directory) {
 	luaL_register(pRunnable->luaState, "Command", command_methods);
 	lua_pushvalue(pRunnable->luaState,-1);
 	lua_setfield(pRunnable->luaState, -2, "__index");
-	if (0 == loadDirectory(pRunnable, directory)) {
+	if (0 == loadDirectory(pRunnable, directory, enableVirtualKey)) {
 		return pRunnable;
 	}
 	luaRunnableDelete(pRunnable);

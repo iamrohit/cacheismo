@@ -9,7 +9,7 @@
 
 typedef void* luaRunnable_t;
 
-luaRunnable_t luaRunnableCreate(char* scriptFile);
+luaRunnable_t luaRunnableCreate(char* directory, int enableVirtualKey);
 void          luaRunnableDelete(luaRunnable_t runnable);
 void          luaRunnableGC(luaRunnable_t runnable);
 int           luaRunnableRun(luaRunnable_t runnable, connection_t connection,

@@ -51,7 +51,7 @@ static void connectionEventHandler(const int fd, const short which, void *arg) {
     return;
 }
 
-connection_t  connectionCreate(u_int16_t port, connectionHandler_t* handler) {
+connection_t  connectionCreate(u_int16_t port, char* ipAddress, connectionHandler_t* handler) {
 	connectionImpl_t* pC = ALLOCATE_1(connectionImpl_t);
 
 	IfTrue(pC, ERR, "Error allocating memory");
@@ -68,6 +68,10 @@ connection_t  connectionCreate(u_int16_t port, connectionHandler_t* handler) {
 	pC->address.sin_family        = AF_INET;
 	pC->address.sin_addr.s_addr   = INADDR_ANY;
 	pC->address.sin_port          = htons(port);
+
+	if (ipAddress) {
+		pC->address.sin_addr.s_addr  = inet_addr(ipAddress);
+	}
 
 	IfTrue(bind(pC->fd, (struct sockaddr *) &pC->address,sizeof(pC->address)) == 0,  ERR, "Error binding");
 	IfTrue(listen(pC->fd, DEFAULT_BACKLOG) == 0,  ERR, "Error listening");
