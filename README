@@ -1,0 +1,42 @@
+Cachismo is a memory cache which can be used as an replacement for memcached.
+It supports memcache protocol (tcp and ascii only).
+
+Few reasons why you might want to use it.
+- Slab allocator used in memcache would waste memory if slab sizes and object
+  sizes are not in sync. For example when using slab sizes of 64/128/256/512/1024 bytes
+  object with size 513 is stored in 1024 bytes slab, wasting almost half the 
+  memory. cashismo tries to maintain memory used by object as close as possible 
+  to the object size.
+
+- I am not sure if slabs are recliamed in memcache or not. Every byte is 
+  reclaimable in cacheismo.
+- True LRU support. memcache will evict items from the slab in which object will 
+  be placed. cachismo will always use the LRU, irrespective of the size.
+- The best part of using cacheismo is that is it fully scriptable in lua.
+  Sample objects map, set, quota and sliding window counters written in lua can 
+  be found in scripts directory. You could create your own objects and place them
+  in the scripts directory. 
+  
+  The interface for accessing scriptable objects is implemented via memcached 
+  get requests. For example: 
+  get set:new:mykey     - would create a new set object refered via myKey
+  get set:put:myKey:a   - would put key a in the set myKey
+  get set:count:myKey   - would return number of elements in the set
+  get set:union:myKey1:myKey2   - would return union of sets myKey1 and myKey2
+  
+  See scripts/set.lua for other functions.  
+  
+  I call this approach virtual keys. Reason for using it .. you can use 
+  existing memcached libraries to access cacheismo. 
+  
+ 
+Building - cacheismo depends on libevent and lua (luagit can also be used)   
+Complete implementation is in about 5000 lines of code and fairly organised.
+
+I have only tested it on ubuntu 64-bit. Not sure if it will work on 32bit or other linux variants.
+
+It is single threaded. Run multiple instances on multicore systems.
+
+
+
+
