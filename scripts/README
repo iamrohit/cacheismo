@@ -1,0 +1,167 @@
+This is the list of the lua methods which can be called by new scripts
+
+
+getHashMap() 
+- Global method, return instance of the global hashmap object.
+
+setLogLevel(level)
+- Sets the logging level. Four levels are defined DEBUG=0, INFO=2, 
+  WARN=2 and ERR=3. The function takes numeric argument.
+
+
+Table 
+The standard table object in lua is extended to support the following methods
+
+marshal(table) 
+- returns a string object which represents the serialized table.
+
+unmarshal(serializedTable)
+- returns a fully constructed table from the given serialized table string
+
+clone(table) 
+- returns a deep copy of the given table
+
+
+HashMap
+The global hashmap object retrieved from getHashMap() supports following methods 
+
+get(key) 
+- returns a cacheItem object for the given key if found, else nil
+
+put(cacheItem) 
+- takes a cacheItem object and puts it in the hashMap
+        
+delete(key) 
+- deletes the cacheItem object associated with the given key from the hashMap.
+
+deleteLRU(requiredSpace) 
+- deletes as many LRU objects as required to free up at least requiredSpace. 
+
+
+CacheItem
+The data in the hashMap is stored in the form of hashMap objects. We need to have 
+a cacheItem object to store in the map and cacheItem is what we get from the map 
+when we do a get. The object supports following methods. These objects are 
+read only.
+
+getKey()
+- returns the key associated with the cacheItem
+
+getKeySize()
+- returns the number of bytes in the key
+
+getExpiryTime()
+- returns the time in seconds since epoch when the current item will expire.
+
+getFlags()
+- returns the flags associated with the cacheItem
+
+getDataSize()
+- returns the size of the data stored in this cacheItem
+
+getData()
+- returns the data stored in the cacheItem as lua string. This is normally not 
+used because lua script don't need access to actual data unless using virtual keys.
+ 
+delete()
+- deletes the reference to the cacheItem object. Important to call this after get 
+from hashMap, after using the cacheItem.
+
+
+Command
+This represents the request coming from the client. This can be modified if 
+required by the script.
+
+getCommand()
+- returns the memcached the command being used. 
+  One of get, add, set, replace, prepend, append, cas, incr, decr, gets, delete,
+  stats, flush_all, version, quit or verbosity
+       
+getKey()
+- returns the key used in the command. This is nil in case of multi-get and other 
+  commands which don't have key as argument.
+  
+setKey(newKey)
+- set the given string newKey as the key for the command object.
+
+getKeySize()
+- returns the size in bytes for the key
+
+getExpiryTime()
+- returns the expiryTime specified in the command.
+
+setExpiryTime(newTime)
+- sets the expiry time to new value newTime.
+
+getFlags()
+- returns the flags specified in the command. It is also used by the verbosity 
+  command to return the logging level.
+   
+setFlags(newFlags)
+- sets the falgs in the command object to new flags.
+
+getDelta()
+- returns the delta value used in incr/decr commands 
+
+setDelta(newDelta)
+- sets the delta value to new delta value
+
+getNoReply()
+- returns the boolean noReply from the command. 
+
+setNoReply(newNoReply)
+- sets the value for the noReply
+
+getDataSize()
+- returns the size of data in the command, in bytes. This works for set, add, etc.
+
+setData(newData)
+- replaces the data in the command object with the newData string
+
+getData()
+- returns the data in the command object as lua string
+
+newCacheItem()
+- creates and returns a cacheItem object using the data in the command object. 
+  This is used with set/add/etc
+  
+writeCacheItem(cacheItem)
+- writes the cacheItem in the memcached response format on the client socket. 
+   "VALUE key flags size\r\ndata\r\n"
+  cas is not supported. 
+  
+writeString(dataString)
+- writes arbitrary string to the client socket. This is useful for writing 
+  "END\r\n", "STORED" and other standard memcached response strings.
+  
+hasMultipleKeys()
+- returns the number of multi-get keys in the command
+
+getMultipleKeys()
+- returns a table of all the keys in the multi-get command 
+
+Apart from these, few helper methods defined in config.lua are also useful.
+
+writeStringAsValue(command, key, value) 
+- writes an arbitrary string in the "VALUE key flags size\r\ndata\r\n" format. 
+  flags is 0 and size is calculated using string.len
+  
+
+executeReadOnly(command, originalKey, objectType, cacheKey, func, ...) 
+- helper function for read only operations on lua tables stored in the cache.
+ It retrievs the data from the cache, uses table.unmarshal to construct the 
+ lua table and calls the function func with this lua table as the first 
+ argument. Any extra args passed to the function and passed to func.
+
+
+executeReadWrite(command, originalKey, objectType, cacheKey, func, ...) 
+- helper function for read/write operations on lua tables stored in the cache 
+  orginal object is deleted and a new object is created with the same key with 
+  latest data values 
+   
+
+executeNew(command, originalKey, objectType, cacheKey, func, ...)
+- helper function for creation of new objects based on lua tables. if the key 
+  is in use, it is deleted before creating the new object
+ 
+See set.lua, map.lua, quota.lua and swcounter.lua for example usage.

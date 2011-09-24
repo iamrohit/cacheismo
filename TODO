@@ -1,0 +1,14 @@
+25th Sep 2011
+
+1) document the lua API
+2) support for noreply, incr, decr, stats, etc
+3) some of the lua methods need to have return values
+4) think about clustering. In the current form cacheismo cannot be used 
+   in a cluster. Since key is used in deciding the server, virtual keys 
+   can cause requests to go to a server which doesn't have the data. 
+   Basically virtual key and actual key need not resolve to same server. 
+   Similarly when multiple keys are used, the problem is compounded. May 
+   be adding proxy/client functionality would help. Explore lua threads 
+   and coroutines.
+   
+   
