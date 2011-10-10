@@ -1,15 +1,28 @@
 #include "connection.h"
+#include <fcntl.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <arpa/inet.h>
 
 typedef struct {
-	bool               isServer;
-	int                fd;
-	struct sockaddr_in address;
-	struct event       event;
-	char*              buffer;
-	int                bufferSize;
-	int                bufferUsed;
-	void*              context;
+	u_int32_t            isServer    : 1;
+	u_int32_t            isAccepted  : 1;
+	u_int32_t            isConnected : 1;
+	u_int32_t                        : 0;
+
+	int                  fd;
+	struct sockaddr_in   address;
+	struct event         event;
+
+	char*                buffer;
+	int                  bufferSize;
+	int                  bufferUsed;
+	void*                context;
+	connectionHandler_t* CH;
 }connectionImpl_t;
 
 #define CONNECTION(x) ((connectionImpl_t*)(x))
@@ -18,9 +31,6 @@ typedef struct {
 #define DEFAULT_BUFFER_SIZE 1024
 #define DEFAULT_BACKLOG     128
 
-static connectionHandler_t* pGlobalConnectionHandler;
-
-#define GCH() pGlobalConnectionHandler
 
 static void connectionEventHandler(const int fd, const short which, void *arg) {
 	connectionImpl_t* pC = CONNECTION(arg);
@@ -36,22 +46,33 @@ static void connectionEventHandler(const int fd, const short which, void *arg) {
     	while (--done) {
     		connection_t newConnection = connectionAccept(pC);
     		if (newConnection) {
-    			GCH()->newConnection(newConnection);
+    			pC->CH->newConnection(newConnection);
     		}else {
     			break;
     		}
     	}
     }else {
+    	if (!pC->isAccepted && !pC->isConnected) {
+    		if (which == EV_READ) {
+    			//read event when connect fails
+    			pC->CH->connectComplete(pC, -1);
+    		}else {
+    			//write when connect succeeds
+    			pC->CH->connectComplete(pC, 0);
+    		}
+    		return;
+    	}
+    	//either accepted or connected socket
     	if (which == EV_READ) {
-    		GCH()->readAvailable(pC);
+    		pC->CH->readAvailable(pC);
        	}else {
-       		GCH()->writeAvailable(pC);
+       		pC->CH->writeAvailable(pC);
     	}
     }
     return;
 }
 
-connection_t  connectionCreate(u_int16_t port, char* ipAddress, connectionHandler_t* handler) {
+connection_t  connectionServerCreate(u_int16_t port, char* ipAddress, connectionHandler_t* handler) {
 	connectionImpl_t* pC = ALLOCATE_1(connectionImpl_t);
 
 	IfTrue(pC, ERR, "Error allocating memory");
@@ -64,7 +85,7 @@ connection_t  connectionCreate(u_int16_t port, char* ipAddress, connectionHandle
 	    		ERR, "Error setting non blocking");
 	}
 
-	bzero((char*) &pC->address, sizeof(pC->address));
+	memset((char*) &pC->address, 0, sizeof(pC->address));
 	pC->address.sin_family        = AF_INET;
 	pC->address.sin_addr.s_addr   = INADDR_ANY;
 	pC->address.sin_port          = htons(port);
@@ -75,10 +96,8 @@ connection_t  connectionCreate(u_int16_t port, char* ipAddress, connectionHandle
 
 	IfTrue(bind(pC->fd, (struct sockaddr *) &pC->address,sizeof(pC->address)) == 0,  ERR, "Error binding");
 	IfTrue(listen(pC->fd, DEFAULT_BACKLOG) == 0,  ERR, "Error listening");
-	pC->isServer = true;
-
-	//TODO : bad design...no class level stuff
-	pGlobalConnectionHandler = handler;
+	pC->isServer = 1;
+	pC->CH = handler;
 	goto OnSuccess;
 OnError:
 	if (pC) {
@@ -280,6 +299,63 @@ int connectionWrite(connection_t conn, fallocator_t fallocator, dataStream_t dat
 	return result;
 }
 
+connection_t connectionClientCreate(char* serverName, int serverPort, connectionHandler_t* handler) {
+	connectionImpl_t* pC = ALLOCATE_1(connectionImpl_t);
+	IfTrue(pC, ERR, "Error allocating memory");
+
+	pC->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	IfTrue(pC->fd > 0, ERR, "Error creating new socket [%s] %s:%d",
+			strerror(errno), serverName, serverPort );
+
+	pC->address.sin_family = AF_INET;
+	pC->address.sin_addr.s_addr = inet_addr(serverName);
+	pC->address.sin_port = htons(serverPort);
+
+	{
+		int flags = fcntl(pC->fd, F_GETFL, 0);
+		IfTrue(fcntl(pC->fd, F_SETFL, flags | O_NONBLOCK) == 0,
+				INFO, "Error setting non blocking");
+
+		IfTrue(setsockopt(pC->fd, SOL_SOCKET, SO_KEEPALIVE, (void *)&flags, sizeof(flags)) == 0,
+				INFO, "Error setting Keep-Alive");
+		IfTrue(setsockopt(pC->fd, IPPROTO_TCP, TCP_NODELAY, (void *)&flags, sizeof(flags)) == 0,
+						INFO, "Error setting tcp no delay");
+	}
+	pC->CH = handler;
+	LOG(INFO, "Created client socket on server %s port %d socket %d",
+			   serverName, serverPort, pC->fd);
+	goto OnSuccess;
+OnError:
+	if (pC) {
+		connectionClose(pC);
+		pC = 0;
+	}
+OnSuccess:
+	return pC;
+}
+
+
+int connectionConnect(connection_t connection) {
+	int           retval = 0;
+	connectionImpl_t* pC = CONNECTION(connection);
+
+	IfTrue(pC, ERR, "Null connection handle");
+	IfTrue(!(pC->isConnected), ERR, "Allready Connected socket %d", pC->fd);
+
+	if (0 == connect(pC->fd, (struct sockaddr *) &(pC->address), sizeof(pC->address))) {
+		pC->isConnected = 1;
+		retval = 0;
+	}else {
+		IfTrue(errno == EINPROGRESS, DEBUG, "Connect Error %d [%s]", pC->fd, strerror(errno));
+		retval = 1;
+	}
+	goto OnSuccess;
+OnError:
+	    retval = -1;
+OnSuccess:
+	    return retval;
+}
+
 
 connection_t  connectionAccept(connection_t serverConnection) {
 	connectionImpl_t* pServer = CONNECTION(serverConnection);
@@ -289,7 +365,7 @@ connection_t  connectionAccept(connection_t serverConnection) {
 	IfTrue(pNew, ERR, "Error allocating memory");
 	socketLength = sizeof(pNew->address);
 
-	pNew->fd = accept(pServer->fd, &(pNew->address), &socketLength);
+	pNew->fd = accept(pServer->fd, (struct sockaddr*)&(pNew->address), &socketLength);
 	IfTrue(pNew->fd > 0, INFO, "Error accepting new connection %d %s\n", pNew->fd, strerror(errno));
 	{
 		int flags = fcntl(pNew->fd, F_GETFL, 0);
@@ -300,7 +376,9 @@ connection_t  connectionAccept(connection_t serverConnection) {
         		INFO, "Error setting Keep-Alive");
         IfTrue(setsockopt(pNew->fd, IPPROTO_TCP, TCP_NODELAY, (void *)&flags, sizeof(flags)) == 0,
                 		INFO, "Error setting tcp no delay");
+        pNew->CH = pServer->CH;
 	}
+	pNew->isAccepted = 1;
 	goto OnSuccess;
 OnError:
 	if (pNew) {
@@ -309,6 +387,17 @@ OnError:
 	}
 OnSuccess:
 	return pNew;
+}
+
+void connectionWaitForConnect(connection_t conn, struct event_base *base) {
+	connectionImpl_t* pC = CONNECTION(conn);
+	if (!(pC->isAccepted) && !(pC->isServer) && !(pC->isConnected)) {
+		event_set(&pC->event, pC->fd, EV_WRITE | EV_READ, connectionEventHandler, (void *)pC);
+		event_base_set(base, &pC->event);
+		event_add(&pC->event, 0);
+	}else {
+		LOG(ERR, "Wait for connect called on non client/connected socket %d", pC->fd);
+	}
 }
 
 
@@ -325,11 +414,23 @@ void  connectionWaitForRead(connection_t conn, struct event_base *base) {
 
 void connectionWaitForWrite(connection_t conn, struct event_base *base) {
 	connectionImpl_t* pC = CONNECTION(conn);
-	event_set(&pC->event, pC->fd, EV_WRITE, connectionEventHandler, (void *)pC);
-	event_base_set(base, &pC->event);
-	event_add(&pC->event, 0);
+	if (!(pC->isServer)) {
+		event_set(&pC->event, pC->fd, EV_WRITE, connectionEventHandler, (void *)pC);
+		event_base_set(base, &pC->event);
+		event_add(&pC->event, 0);
+	}else {
+		LOG(ERR, "wait for write called on server socket %d", pC->fd);
+	}
 }
 
+void connectionWaitCancel(connection_t conn, struct event_base *base) {
+	connectionImpl_t* pC = CONNECTION(conn);
+	if (!(pC->isServer)) {
+		event_del(&pC->event);
+	}else {
+		LOG(ERR, "wait cancel called on server socket %d", pC->fd);
+	}
+}
 void connectionSetContext(connection_t connection, void* context) {
 	connectionImpl_t* pC = CONNECTION(connection);
 	if (pC) {

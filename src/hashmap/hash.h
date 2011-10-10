@@ -5,9 +5,9 @@
 extern "C" {
 #endif
 
-uint32_t hashbig(const void *key, size_t length, const uint32_t initval);
+#include "../common/common.h"
 
-uint32_t hashlittle(const void *key, size_t length, const uint32_t initval);
+uint32_t hash(const void *key, size_t length, const uint32_t initval);
 
 #ifdef    __cplusplus
 }

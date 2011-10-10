@@ -1,46 +1,3 @@
--- getHashMap
--- setLogLevel
-
--- Table 
-	-- marshal
-        -- unmarshal
-        -- clone
--- HashMap
-	    -- get
-        -- put
-        -- delete
-        -- deleteLRU
--- CacheItem
-	-- getKey
-        -- getKeySize
-        -- getExpiryTime
-        -- getFlags
-        -- getDataSize
-        -- getData
-        -- delete
-
--- Command
-	-- getCommand
-        -- getKey
-        -- setKey
-        -- getKeySize
-        -- getExpiryTime
-        -- setExpiryTime
-        -- getFlags
-        -- setFlags
-        -- getDelta
-        -- setDelta
-        -- getNoReply
-        -- setNoReply
-   
-        -- getDataSize
-        -- setData
-        -- getData
-        -- newCacheItem
-        -- writeCacheItem
-        -- writeString
-        -- hasMultipleKeys
-        -- getMultipleKeys
 
 local function handleGET(command) 
      local hashMap   = getHashMap()   
@@ -103,7 +60,7 @@ end
 local function handleDELETE(command) 
   local cacheItem = getHashMap():get(command:getKey())
   if (cacheItem ~= nil) then 
-      getHashMap():delete(commad:getKey())
+      getHashMap():delete(command:getKey())
       cacheItem:delete()
       command:writeString("DELETED\r\n")
   else 

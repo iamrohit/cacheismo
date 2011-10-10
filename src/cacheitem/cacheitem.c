@@ -1,4 +1,28 @@
 #include "cacheitem.h"
+#include <time.h>
+
+/* This is what we store in the hashmap. Current implementation is more
+ * aligned towards large objects (> 1KB). Well it is not aligned as such
+ * but an empty cacheItem object is more than 100 bytes. I need to do
+ * some work on reducing this overhead so that smaller objects are
+ * tightly packed.
+ *
+ * The workaround is to use large objects. Instead of storing userName,
+ * useAge, userLastModificationTime etc as multiple small objects, you
+ * can create a user object based on lua table and store all the
+ * properties in one object. This will minimize memory usage.
+ *
+ * The reason why I used dataStream here is that refcount is maintained
+ * both at item level and buffers inside the dataStream. If we get
+ * get request for key and delete request for key, and before we are
+ * able to send response for the key, the item is deleted, we will
+ * have segfaults. I wanted the data to have a separate lifetime
+ * from the item itself. Hence instead of storing the value directly
+ * it is always done in the form of dataStream. It might be possible
+ * to "wrap" cacheItem as a dataBuffer and use cacheItem's refcount
+ * also as databuffer refcount, but that has to wait.
+ *
+ */
 
 typedef struct {
 	u_int32_t       expiryTime;    /* expire time */

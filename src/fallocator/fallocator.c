@@ -1,9 +1,33 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <pthread.h>
-#include <string.h>
 #include "fallocator.h"
-#include "../common/common.h"
+
+/*
+ * Fallocator is again a simple allocator which is used to manage temporary memory.
+ * It does a 4KB alloc using malloc and returns memory by simply incrementing the
+ * used pointer by whatever size is required. For memory bigger than 4KB, it
+ * depends on malloc. If the new allocation cannot be fulfilled from the
+ * current buffer, new buffer is allocated.
+ *
+ * None of the memory allocated by fallocator is reused. Calling free simply
+ * decrements refcount on the parent buffer and when refcount becomes 0, the
+ * buffer is freed in one shot.
+ *
+ * All buffers used by fallocator are tracked. So even if caller forgets to
+ * free memory, it is finally freed when the fallocator is destroyed.
+ *
+ * It is not good to use fallocator for allocating memory which will be retained
+ * for long time as this will just increase memory pressure on the system.
+ *
+ * We use it at two places.
+ * 1) A single fallocator for lua scripts as they only use memory temporarily.
+ *    Once the script is executed, all used memory will be freed by lua GC.
+ * 2) For the connection buffer and subsequent parsing of the request,
+ *    generating response, etc. Again this memory is usually released very fast,
+ *    and any pending stuff is cleared when connection is closed.
+ *
+ * Instead of bothering malloc again and again, we also cache the fallocator
+ * buffer (only 4KB buffers). The default size of cache is 16MB but can be
+ * increased/decreased as required via command line parameter -i.
+ */
 
 
 /* 8 bytes are for the malloc header so that the whole thing is in 1 page */
@@ -258,8 +282,6 @@ void fallocatorFree(fallocator_t fallocator, void* pointer) {
 
 void* fallocatorRealloc(fallocator_t fallocator, void* pointer, u_int32_t osize, u_int32_t nsize) {
 	fallocatorImpl_t* pPool   = FALLOCATOR(fallocator);
-	memoryPointer_t*  pMP     = (memoryPointer_t*)(pointer - sizeof(void*));
-	memoryBuffer_t*   pBuffer = pMP->pBuffer;
 	void*             newPointer = 0;
 
 	newPointer = fallocatorMalloc(pPool, nsize);

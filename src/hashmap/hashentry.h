@@ -1,6 +1,7 @@
 #ifndef HASHMAP_HASHENTRY_H_
 #define HASHMAP_HASHENTRY_H_
 
+#include "../common/common.h"
 /*
  * The motivation for this structure comes from the objective of keeping the
  * hashmap implementation clean. Didn't want to force a single TYPE for

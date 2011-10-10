@@ -1,8 +1,7 @@
-#include "../common/common.h"
 #include "hashmap.h"
 #include "hash.h"
-#include "../io/datastream.h"
-#include "hashentry.h"
+#include "../datastream/datastream.h"
+#include <time.h>
 
 /* This is the cache/hashtable implementation that we will use. Most people use
  * chaining based hashtables. I am using Linear Hashing algorithm by Litwin.
@@ -52,7 +51,6 @@ typedef struct {
 }minHeapImpl_t;
 
 typedef struct hashMapImpl_t {
-	u_int32_t        bigEndian;
 	u_int32_t        count;
     u_int32_t        size;
     u_int32_t        maskedBits;
@@ -82,18 +80,6 @@ static void checkMagic(hashEntry_t* pElement)  {
 			  *a      = 1;
 		}
 	}
-}
-
-
-static int isBigEndian()
-{
-   int i = 1;
-   char *p = (char *) &i;
-   if (p[0] == 1) {
-	   return 0;
-   }else {
-      return 1;
-   }
 }
 
 static u_int32_t currentTimeInSeconds(void)
@@ -267,11 +253,7 @@ OnSuccess:
 }
 
 static u_int32_t hashcode( hashMapImpl_t* pHashMap, const char* key, u_int32_t keyLength) {
-	if (pHashMap->bigEndian) {
-		return hashbig((u_int32_t*)key, (size_t)(keyLength), 0xFEEDDEED);
-	}else {
-		return hashlittle((u_int32_t*)key, (size_t)(keyLength), 0xFEEDDEED);
-	}
+	return hash((u_int32_t*)key, (size_t)(keyLength), 0xFEEDDEED);
 }
 
 hashMap_t hashMapCreate(hashEntryAPI_t* API ) {
@@ -286,7 +268,6 @@ hashMap_t hashMapCreate(hashEntryAPI_t* API ) {
     IfTrue(pHashMap->pBuckets, ERR, "Error allocating memory");
     pHashMap->API        = API;
     pHashMap->pMinHeap   = minHeapCreate(API, INITIAL_HASHMAP_SIZE);
-    pHashMap->bigEndian  = isBigEndian();
 
     goto OnSuccess;
 OnError:
@@ -303,6 +284,7 @@ u_int32_t hashMapSize(hashMap_t hashMap) {
 	if (pHashMap) {
 		return pHashMap->count;
 	}
+	return 0;
 }
 
 void hashMapDelete(hashMap_t hashMap) {

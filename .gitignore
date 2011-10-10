@@ -7,7 +7,41 @@
 *.o
 *.so
 *.d
+*.a
+*.la
+*.deps
+*.libs
+*.lo
+*.scan
+Makefile
+Makefile.in
 cacheismo
+
+#Links 
+INSTALL
+config.guess
+config.h
+config.h.in
+config.log
+config.status
+config.sub
+aclocal.m4
+compile
+autom4te.cache
+configure
+depcomp
+install-sh
+libtool 
+ltmain.sh
+missing 
+stamp-h1
+tags
+TAGS
+cscope.out
+*~
+
+.cproject
+.project
 
 # Packages #
 ############
@@ -34,3 +68,4 @@ cacheismo
 ehthumbs.db
 Icon?
 Thumbs.db
+

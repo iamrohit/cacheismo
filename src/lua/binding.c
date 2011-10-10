@@ -1,15 +1,21 @@
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
+#include <dirent.h>
+
 #include "binding.h"
-#include "../common/common.h"
-#include "../driver/commands.h"
+#include "marshal.h"
+
+#include "../common/commands.h"
+#include "../common/map.h"
 #include "../cacheitem/cacheitem.h"
 #include "../hashmap/hashmap.h"
 #include "../io/connection.h"
-#include <stdio.h>
-#include <dirent.h>
-#include "../driver/driver.h"
+#include "../cacheismo.h"
+
+#include "../cluster/consistent.h"
+#include "../cluster/clustermap.h"
+
 
 #define LUA_CONFIG_FILE "config.lua"
 #define LUA_CORE_FILE   "core.lua"
@@ -18,18 +24,75 @@
 typedef struct {
 	fallocator_t  fallocator;
 	lua_State*    luaState;
+	clusterMap_t  clusterMap;
 }luaRunnableImpl_t;
 
+
 typedef struct luaContext_t {
-	connection_t  connection;
-	dataStream_t  writeStream;
-	fallocator_t  fallocator;
-	command_t*    pCommand;
+	connection_t    connection;
+	fallocator_t    fallocator;
+	command_t*      pCommand;
+	luaRunnable_t   runnable;
+	int             threadRef;
 } luaContext_t;
+
+/* for handling parallel gets we need to keep track of
+ * what was asked by the script and have we got all
+ * of it.
+ */
+
+typedef struct keyValue_t {
+	struct keyValue_t* pNext;
+	struct keyValue_t* pPrev;
+	char*              key;
+	char*              value;
+}keyValue_t;
+
+/* We initialize the map and set the total to nunber of
+ * keys we have asked for. Everytime we get a callback
+ * we insert the keyValue_t in the map against the
+ * correct server value.
+ *
+ * if received == total, we have got all the callbacks and
+ * now we will resume the script.
+ * The results will be returned to the lua script in the
+ * form of a map...
+ *  {
+ *    server1 => {{key1 => value1}, {key2 => value2}}
+ *  }
+ *  If we got error from the server, the corresponding
+ *  entry will have nil value
+ */
+
+typedef struct {
+	int    total;
+	int    received;
+	map_t  serverMap;
+} multiContext_t;
+
 
 #define LUA_RUNNABLE(x) (luaRunnableImpl_t*)(x)
 
 /* these are from driver.c */
+
+/*
+static multiContext_t* multiContextCreate(int count) {
+	multiContext_t* pMContext = ALLOCATE_1(multiContext_t);
+	if (pMContext) {
+		pMContext->serverMap = mapCreate();
+		pMContext->total     = count;
+		if (!pMContext->serverMap) {
+			FREE(pMContext);
+			pMContext = 0;
+		}
+	}
+	return pMContext;
+}
+
+static void multiContextDelete(multiContext_t* pMContext) {
+
+}
+*/
 
 static const char* command2String(enum commands_enum_t command) {
 	switch (command) {
@@ -54,14 +117,42 @@ static const char* command2String(enum commands_enum_t command) {
 	return 0;
 }
 
+static void stackdump(lua_State* l)
+{
+    int i;
+    int top = lua_gettop(l);
 
-static int luaCommandNew(lua_State* L, connection_t connection,
-		 dataStream_t writeStream, fallocator_t fallocator, command_t *pCommand) {
+    LOG(ERR, "total items in stack %d\n",top);
+
+    for (i = 1; i <= top; i++)
+    {  /* repeat for each level */
+        int t = lua_type(l, i);
+        switch (t) {
+            case LUA_TSTRING:  /* strings */
+                LOG(ERR, "string: '%s'\n", lua_tostring(l, i));
+                break;
+            case LUA_TBOOLEAN:  /* booleans */
+            	LOG(ERR, "boolean %s\n",lua_toboolean(l, i) ? "true" : "false");
+                break;
+            case LUA_TNUMBER:  /* numbers */
+            	LOG(ERR, "number: %g\n", lua_tonumber(l, i));
+                break;
+            default:  /* other values */
+            	LOG(ERR, "%s\n", lua_typename(l, t));
+                break;
+        }
+    }
+}
+
+
+static int luaCommandNew(lua_State* L, connection_t connection, fallocator_t fallocator,
+		command_t *pCommand, luaRunnable_t runnable) {
    luaContext_t* context = (luaContext_t*)lua_newuserdata(L, sizeof(luaContext_t));
    context->pCommand    = pCommand;
    context->connection  = connection;
-   context->writeStream = writeStream;
    context->fallocator  = fallocator;
+   context->runnable    = runnable;
+   context->threadRef   = LUA_NOREF;
    lua_getglobal(L, "Command");
    lua_setmetatable(L, -2);
    return 1;
@@ -273,6 +364,166 @@ static int luaCommandGetMultipleKeys(lua_State* L) {
     return 1;
 }
 
+static int luaCommandGetValueFromExternalServer(lua_State* L) {
+	luaContext_t*      context   = (luaContext_t*) lua_touserdata(L, 1);
+	char*              key       = 0;
+	char*              server    = 0;
+	const char*        luaKey    = 0;
+	const char*        luaServer = 0;
+	size_t             l         = 0;
+	luaRunnableImpl_t* pRunnable = 0;
+	int                result    = 0;
+
+	IfTrue(context, ERR, "Null context from lua stack");
+	pRunnable = context->runnable;
+
+	luaKey  = luaL_checklstring(L, -1, &l);
+	IfTrue(luaKey, WARN, "Unable to get key from lua stack");
+	key = strdup(luaKey);
+	IfTrue(key, WARN, "Out of memory copying key");
+
+	luaServer = luaL_checklstring(L, -2, &l);
+	IfTrue(luaServer, WARN, "Unable to get server from lua stack");
+	server = strdup(luaServer);
+	IfTrue(server, WARN, "Out of memory copying server");
+
+	LOG(ERR, "context %p server %s key %s\n", context, server, key);
+	//current running thread is always present at the top of the
+	//main lua stack
+	context->threadRef = luaL_ref(pRunnable->luaState, LUA_REGISTRYINDEX);
+
+	IfTrue(0 == clusterMapGet(pRunnable->clusterMap, context, server, key),
+			WARN, "Error submitting request to clusterMap");
+
+	goto OnSuccess;
+OnError:
+	result = -1;
+	if (pRunnable) {
+		//restore thread on the main stack
+		lua_rawgeti(pRunnable->luaState, LUA_REGISTRYINDEX, context->threadRef);
+		luaL_unref(pRunnable->luaState, LUA_REGISTRYINDEX, context->threadRef);
+		context->threadRef = LUA_NOREF;
+		lua_pushnil(L);
+	}
+OnSuccess:
+	if (server) {
+		free(server);
+	}
+	if (key) {
+		free(key);
+	}
+	if (result < 0) {
+		//one value on the stack, which is nil...
+		//script continues to run without any interruption
+		return 1;
+	}else {
+		//we do a yield, nothing on the stack
+		//this for the script to stop execution
+		//and return result to driver.c
+		return lua_yield (L, 0);
+	}
+}
+
+/*
+static int luaCommandPrintTable(lua_State* L) {
+	luaContext_t*   context  = (luaContext_t*) lua_touserdata(L, 1);
+	lua_pushvalue(L, -1);
+	lua_pushnil(L);
+	while (lua_next(L, -2))  {
+		lua_pushvalue(L, -2);
+		const char *key = lua_tostring(L, -1);
+		if (lua_istable(L, -2)) {
+			lua_pushvalue(L, -2);
+			lua_pushnil(L);
+			while (lua_next(L, -2))  {
+				lua_pushvalue(L, -2);
+				const char *key2 = lua_tostring(L, -1);
+				const char *value2 = lua_tostring(L, -2);
+				lua_pop(L, 2);
+			}
+			lua_pop(L, 1);
+		}else {
+			const char *value = lua_tostring(L, -2);
+		}
+		lua_pop(L, 2);
+	}
+	lua_pop(L, 1);
+	return 0;
+}
+*/
+
+/*
+ * We expect a table on the stack
+ *   server1 : key1, key2
+ *   server2 : key3, key4, ...
+ *
+ *   The final result is of the form
+ *   server1 : key1 => value1, key2 => value2
+ *   server2 : key3 => value3, key4 => value4
+ */
+
+/*
+static int luaCommandGetMultipleValuesFromExternalServers(lua_State* L) {
+	luaContext_t*      context   = (luaContext_t*) lua_touserdata(L, 1);
+	char*              key       = 0;
+	char*              server    = 0;
+	const char*        luaKey    = 0;
+	const char*        luaServer = 0;
+	size_t             l         = 0;
+	luaRunnableImpl_t* pRunnable = 0;
+	int                result    = 0;
+
+	IfTrue(context, ERR, "Null context from lua stack");
+	pRunnable = context->runnable;
+
+	luaKey  = luaL_checklstring(L, -1, &l);
+	IfTrue(luaKey, WARN, "Unable to get key from lua stack");
+	key = strdup(luaKey);
+	IfTrue(key, WARN, "Out of memory copying key");
+
+	luaServer = luaL_checklstring(L, -2, &l);
+	IfTrue(luaServer, WARN, "Unable to get server from lua stack");
+	server = strdup(luaServer);
+	IfTrue(server, WARN, "Out of memory copying server");
+
+	LOG(ERR, "context %p server %s key %s\n", context, server, key);
+	//current running thread is always present at the top of the
+	//main lua stack
+	context->threadRef = luaL_ref(pRunnable->luaState, LUA_REGISTRYINDEX);
+
+	IfTrue(0 == clusterMapGet(pRunnable->clusterMap, context, server, key),
+			WARN, "Error submitting request to clusterMap");
+
+	goto OnSuccess;
+OnError:
+	result = -1;
+	if (pRunnable) {
+		//restore thread on the main stack
+		lua_rawgeti(pRunnable->luaState, LUA_REGISTRYINDEX, context->threadRef);
+		luaL_unref(pRunnable->luaState, LUA_REGISTRYINDEX, context->threadRef);
+		context->threadRef = LUA_NOREF;
+		lua_pushnil(L);
+	}
+OnSuccess:
+	if (server) {
+		free(server);
+	}
+	if (key) {
+		free(key);
+	}
+	if (result < 0) {
+		//one value on the stack, which is nil...
+		//script continues to run without any interruption
+		return 1;
+	}else {
+		//we do a yield, nothing on the stack
+		//this for the script to stop execution
+		//and return result to driver.c
+		return lua_yield (L, 0);
+	}
+}
+*/
+
 // our methods..
 static const luaL_Reg command_methods[] = {
     {"getCommand",     luaCommandGetCommand},
@@ -295,6 +546,7 @@ static const luaL_Reg command_methods[] = {
     {"writeString",    luaCommandWriteString},
     {"hasMultipleKeys",luaCommandHasMultipleKeys},
     {"getMultipleKeys",luaCommandGetMultipleKeys},
+    {"getFromExternalServer",luaCommandGetValueFromExternalServer},
     {NULL, NULL}
 };
 
@@ -368,6 +620,7 @@ static int luaGetGlobalHashMap(lua_State* L) {
    return 1;
 }
 
+
 static int luaSetGlobalLogLevel(lua_State* L) {
 	int   level = lua_tointeger(L, 1);
 	setGlobalLogLevel(level);
@@ -381,13 +634,10 @@ static int luaHashMapGet(lua_State* L) {
 	cacheItem_t item = 0;
 	const char *s = luaL_checklstring(L, -1, &l);
 	if (s && l > 0) {
-		//printf("hashmap get for key %s \n", s);
 		item = hashMapGetElement(*pHashMap, (char*)s, l);
 		if (item) {
-			//printf("value for key %s found\n", s);
 			luaCacheItemNew(L, item);
 		}else {
-			//printf("value for key %s NOT found\n", s);
 			lua_pushnil(L);
 		}
 	}else {
@@ -443,9 +693,87 @@ static const luaL_Reg hashmap_methods[] = {
 };
 
 
-int luaopen_marshal(lua_State *L, fallocator_t fallocator);
+
+static int luaConsistentNew(lua_State* L) {
+	consistent_t consistent = 0;
+	size_t l;
+	const char *serverList = luaL_checklstring(L, -1, &l);
+	if (serverList && l > 0) {
+		consistent =  consistentCreate((char*)serverList);
+	}
+
+	if (consistent) {
+		consistent_t* pC = (consistent_t*)lua_newuserdata(L, sizeof(consistent_t));
+		*pC = consistent;
+		lua_getglobal(L, "Consistent");
+		lua_setmetatable(L, -2);
+	}else {
+		lua_pushnil(L);
+	}
+   return 1;
+}
+
+static int luaConsistentDelete(lua_State* L) {
+	consistent_t* pC = (consistent_t*)lua_touserdata(L, 1);
+	consistentDelete(*pC);
+	return 0;
+}
+
+static int luaConsistentFindServer(lua_State* L) {
+	consistent_t*   pC = (consistent_t*)lua_touserdata(L, 1);
+	size_t l = 0;
+	const char* server = 0;
+	const char *key = luaL_checklstring(L, -1, &l);
+	if (key && l > 0) {
+		server =  consistentFindServer(*pC, (char*)key);
+	}
+	if (server) {
+		lua_pushstring(L, server);
+	}else {
+		lua_pushnil(L);
+	}
+	return 1;
+}
 
 
+static int luaConsistentGetServerCount(lua_State* L) {
+	consistent_t*   pC = (consistent_t*)lua_touserdata(L, 1);
+	lua_pushinteger(L, consistentGetServerCount(*pC));
+	return 1;
+}
+
+static int luaConsistentIsServerAvailable(lua_State* L) {
+	consistent_t*   pC = (consistent_t*)lua_touserdata(L, 1);
+	size_t l;
+	int result = 0;
+	const char* server = luaL_checklstring(L, -1, &l);
+	if (server && l > 0) {
+		result =  consistentIsServerAvailable(*pC, (char*)server);
+	}
+	lua_pushinteger(L, result);
+	return 1;
+}
+
+static int luaConsistentSetServerAvailable(lua_State* L) {
+	consistent_t*   pC = (consistent_t*)lua_touserdata(L, 1);
+	size_t l;
+	const char* server = luaL_checklstring(L, -1, &l);
+	if (server && l > 0) {
+		int valueToSet = lua_tointeger(L, 2);
+		consistentSetServerAvailable(*pC, (char*)server, valueToSet);
+	}
+	return 0;
+}
+
+
+// r methods..
+static const luaL_Reg consistent_methods[] = {
+    {"findServerForKey",   luaConsistentFindServer},
+    {"getServerCount",     luaConsistentGetServerCount},
+    {"isServerAvailable",  luaConsistentIsServerAvailable},
+    {"setServerAvailable", luaConsistentSetServerAvailable},
+    {NULL, NULL}
+};
 
 static int isCoreOrConfigFile(char* fileName) {
 	if ((strcmp(fileName, LUA_CONFIG_FILE)) == 0 || (strcmp(fileName, LUA_CORE_FILE) == 0)) {
@@ -564,14 +892,21 @@ static void* fallocatorBasedAlloc (void *ud, void *ptr, size_t osize, size_t nsi
 }
 
 
+
+static void clusterMapResultHandler(void* luaContext, char* key, int status, dataStream_t data);
+
+
 luaRunnable_t luaRunnableCreate(char* directory, int enableVirtualKey) {
 	luaRunnableImpl_t* pRunnable = ALLOCATE_1(luaRunnableImpl_t);
 	pRunnable->fallocator = fallocatorCreate();
 	pRunnable->luaState = lua_newstate(fallocatorBasedAlloc, pRunnable->fallocator);
-
+	pRunnable->clusterMap = clusterMapCreate(clusterMapResultHandler);
 	luaL_openlibs(pRunnable->luaState);
-	lua_register(pRunnable->luaState, "getHashMap", luaGetGlobalHashMap);
-	lua_register(pRunnable->luaState, "setLogLevel", luaSetGlobalLogLevel);
+	lua_register(pRunnable->luaState, "getHashMap",       luaGetGlobalHashMap);
+	lua_register(pRunnable->luaState, "setLogLevel",      luaSetGlobalLogLevel);
+	lua_register(pRunnable->luaState, "newConsistent",    luaConsistentNew);
+	lua_register(pRunnable->luaState, "deleteConsistent", luaConsistentDelete);
+
 	//open the marshling library
 	luaopen_marshal(pRunnable->luaState, pRunnable->fallocator);
 	luaL_register(pRunnable->luaState, "HashMap", hashmap_methods);
@@ -581,6 +916,9 @@ luaRunnable_t luaRunnableCreate(char* directory, int enableVirtualKey) {
 	lua_pushvalue(pRunnable->luaState,-1);
 	lua_setfield(pRunnable->luaState, -2, "__index");
 	luaL_register(pRunnable->luaState, "Command", command_methods);
+	lua_pushvalue(pRunnable->luaState,-1);
+	lua_setfield(pRunnable->luaState, -2, "__index");
+	luaL_register(pRunnable->luaState, "Consistent", consistent_methods);
 	lua_pushvalue(pRunnable->luaState,-1);
 	lua_setfield(pRunnable->luaState, -2, "__index");
 	if (0 == loadDirectory(pRunnable, directory, enableVirtualKey)) {
@@ -607,45 +945,30 @@ void luaRunnableGC(luaRunnable_t runnable) {
 	lua_gc(pRunnable->luaState, LUA_GCCOLLECT, 0);
 }
 
-static void stackdump(lua_State* l)
-{
-    int i;
-    int top = lua_gettop(l);
 
-    LOG(ERR, "total items in stack %d\n",top);
+/**
+ * In non cluster mode we either run with virtual keys enabled or not.
+ * When virtual keys are enabled, we load the script files and in case
+ * of get requests, we check if the first two tokens in the key
+ * correspond to some script/function pair. This adds may be 5%
+ * overhead which can be avoided if virtual key support is not
+ * required.
+ *
+ */
+static int luaRunnableRunNoCluster(luaRunnableImpl_t* pRunnable, connection_t connection,
+		 fallocator_t fallocator, command_t* pCommand,
+		 int enableVirtualKey) {
 
-    for (i = 1; i <= top; i++)
-    {  /* repeat for each level */
-        int t = lua_type(l, i);
-        switch (t) {
-            case LUA_TSTRING:  /* strings */
-                LOG(ERR, "string: '%s'\n", lua_tostring(l, i));
-                break;
-            case LUA_TBOOLEAN:  /* booleans */
-            	LOG(ERR, "boolean %s\n",lua_toboolean(l, i) ? "true" : "false");
-                break;
-            case LUA_TNUMBER:  /* numbers */
-            	LOG(ERR, "number: %g\n", lua_tonumber(l, i));
-                break;
-            default:  /* other values */
-            	LOG(ERR, "%s\n", lua_typename(l, t));
-                break;
-        }
-    }
-}
-
-int luaRunnableRun(luaRunnable_t runnable, connection_t connection,
-		 dataStream_t writeStream, fallocator_t fallocator,
-		 command_t* pCommand, int enableVirtualKey) {
 	int result = 0;
-	luaRunnableImpl_t* pRunnable = LUA_RUNNABLE(runnable);
+
 	if (enableVirtualKey) {
 		lua_getglobal(pRunnable->luaState, "mainVirtualKey");
 	}else {
 		lua_getglobal(pRunnable->luaState, "mainNormal");
 	}
-	luaCommandNew(pRunnable->luaState, connection, writeStream, fallocator, pCommand);
+	luaCommandNew(pRunnable->luaState, connection, fallocator, pCommand, pRunnable);
     result = lua_pcall(pRunnable->luaState, 1, 1, 0);
+
  	if (result != 0) {
 		LOG(ERR, "lua_pcall failed  [%s]", lua_tostring(pRunnable->luaState,-1));
 		stackdump(pRunnable->luaState);
@@ -658,5 +981,121 @@ int luaRunnableRun(luaRunnable_t runnable, connection_t connection,
 	}
  	//TODO : may be in case of lua error we should simply
  	//       delete and recreate luaState
+	return result;
+}
+
+static void clusterMapResultHandler(void* luaContext, char* key, int status, dataStream_t data) {
+	luaContext_t* pContext = (luaContext_t*)luaContext;
+	luaRunnableImpl_t* pRunnable = LUA_RUNNABLE(pContext->runnable);
+	int result                   = 0;
+	lua_rawgeti(pRunnable->luaState, LUA_REGISTRYINDEX, pContext->threadRef);
+	luaL_unref(pRunnable->luaState, LUA_REGISTRYINDEX, pContext->threadRef);
+	pContext->threadRef = LUA_NOREF;
+
+	lua_State*  localLuaState = lua_tothread(pRunnable->luaState, -1);
+
+	if (status == 0) {
+		int   length = dataStreamGetSize(data);
+		char* buffer = dataStreamToString(data);
+		if (buffer) {
+			lua_pushlstring(localLuaState, buffer, length);
+			FREE(buffer);
+		}else {
+			lua_pushnil(localLuaState);
+		}
+	}else {
+		lua_pushnil(localLuaState);
+	}
+
+	//now we need to resume the script
+	result = lua_resume(localLuaState, 1);
+
+	if (result != 0) {
+		if (result == LUA_YIELD) {
+			return;
+		}else {
+			LOG(ERR, "lua_resume failed  [%s]", lua_tostring(localLuaState,-1));
+			stackdump(localLuaState);
+		}
+	}else {
+		result = lua_tointeger(localLuaState, -1);
+		lua_remove(localLuaState, lua_gettop(localLuaState));
+		if (result != 0) {
+			LOG(WARN, "main lua function returned error %d", result);
+		}
+	}
+	//pop the thread from stack so that it can be garbage collected
+	lua_remove(pRunnable->luaState, lua_gettop(pRunnable->luaState));
+	onLuaResponseAvailable(((luaContext_t*)luaContext)->connection, result);
+	return;
+}
+
+
+/**
+ * In cluster mode each request gets a new lua thread to handle the request.
+ * This again has some 8% overhead and we don't want to incur it, in case
+ * cluster support is not required.
+ */
+
+int luaRunnableRun(luaRunnable_t runnable, connection_t connection, fallocator_t fallocator,
+		 command_t* pCommand, int enableVirtualKey, int enableClusterMode) {
+	luaRunnableImpl_t* pRunnable = LUA_RUNNABLE(runnable);
+	int                result    = 0;
+
+	if (!enableClusterMode) {
+		return luaRunnableRunNoCluster(pRunnable, connection, fallocator, pCommand, enableVirtualKey);
+	}
+
+	lua_State*  localLuaState = lua_newthread(pRunnable->luaState);
+
+	if (enableVirtualKey) {
+		lua_getglobal(localLuaState, "mainVirtualKey");
+	}else {
+		lua_getglobal(localLuaState, "mainNormal");
+	}
+
+	if (lua_isnil (localLuaState, 1)) {
+		stackdump(pRunnable->luaState);
+	}
+	luaCommandNew(localLuaState, connection, fallocator, pCommand, pRunnable);
+	LOG(ERR, "stackdump for local thread befor resume");
+ 			stackdump(localLuaState);
+	LOG(ERR, "stackdump for main thread befor resume");
+				stackdump(pRunnable->luaState);
+
+    result = lua_resume(localLuaState, 1);
+
+ 	if (result != 0) {
+ 		LOG(ERR, "Result value not zero %d", result);
+ 		//this can only happen for getFromServer call
+ 		if (result == LUA_YIELD) {
+ 			LOG(ERR, "Yield from thread ");
+ 			stackdump(localLuaState);
+ 			return 1;
+ 		}else {
+ 			LOG(ERR, "Eror from thread %d", result);
+ 			LOG(ERR, "lua_resume failed  [%s]", lua_tostring(localLuaState,-1));
+ 			LOG(ERR, "stackdump for local thread");
+ 			stackdump(localLuaState);
+ 			LOG(ERR, "stackdump for main thread");
+ 			stackdump(pRunnable->luaState);
+ 			result = -1;
+ 		}
+	}else {
+		LOG(ERR, "return value from resume %d", result);
+		result = lua_tointeger(localLuaState, -1);
+		LOG(ERR, "return value on stack %d", result);
+		LOG(ERR, "stackdump for local thread");
+		stackdump(localLuaState);
+		lua_remove(localLuaState, lua_gettop(localLuaState));
+		if (result != 0) {
+			LOG(WARN, "main lua function returned error %d", result);
+		}
+		LOG(ERR, "stackdump for main thread before poping out thread");
+			stackdump(pRunnable->luaState);
+	}
+	lua_remove(pRunnable->luaState, lua_gettop(pRunnable->luaState));
+	LOG(ERR, "stackdump for main thread");
+	stackdump(pRunnable->luaState);
 	return result;
 }

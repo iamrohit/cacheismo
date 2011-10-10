@@ -4,6 +4,14 @@
 function mainNormal(command)
     local cmdType  = command:getCommand()
     local executer = core[cmdType]
+    
+    local hello = {}
+    local world = {"world1", "world2", "world3"}
+    hello[1] = "world"
+    hello[2] = "hello"
+    hello[3] = world
+    
+    command:printTable(hello)
         
 	if (executer == nil) then
         return -1
@@ -50,7 +58,6 @@ function mainVirtualKey(command)
     end
     return 0 	
 end
-
 
 function handleGET(command, key) 
     local cacheItem = getHashMap():get(key)

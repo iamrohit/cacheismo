@@ -1,11 +1,28 @@
-#include "../common/common.h"
 #include "chunkpool.h"
-#include "skiplist.h"
+#include "../common/skiplist.h"
+#include <time.h>
 
 /*
- * A simple malloc implementation ....
- * just because I wanted to write one
+ * A simple malloc implementation.
+ * The twist is that this malloc doesn't allocate more than 4092 bytes.
+ * If the item is bigger than 4092 bytes, multiple buffers can be used.
+ * Apart from malloc, this implementation also supports what I call
+ * relaxed malloc. In case we don't have buffer of a given size, we
+ * return a smaller buffer. It is expected that the caller can use
+ * multiple smaller buffers to the same effect at a bit higher cost
+ * of buffer management.
  *
+ * We have 256 buckets starting from 16 bytes to 4096 bytes.
+ * Initially all the memory is given to the 4096 size buckets.
+ * If the required sized bucket is empty, we pick up a buffer
+ * from next available bucket and split the buffer into two.
+ *
+ * 4 bytes of every allocation are used for management. Thus we only
+ * know the size of the current and next allocation and not the
+ * previous one. Hence the use of GC function which is periodically
+ * called to merge smaller buffers to create larger buffers. This is
+ * also done at free time, but as discussed above doesn't work in
+ * all the cases.
  */
 
 typedef struct slabEntry_t {

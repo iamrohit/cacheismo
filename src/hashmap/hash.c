@@ -9,8 +9,24 @@
  *       or commercial.  It's free."
  *
  */
-
-#include "../common/common.h"
+#include "hash.h"
+/*
+ * Since the hash function does bit manipulation, it needs to know
+ * whether it's big or little-endian. ENDIAN_LITTLE and ENDIAN_BIG
+ * are set in the configure script.
+ */
+#if ENDIAN_BIG == 1
+# define HASH_LITTLE_ENDIAN 0
+# define HASH_BIG_ENDIAN 1
+#else
+# if ENDIAN_LITTLE == 1
+#  define HASH_LITTLE_ENDIAN 1
+#  define HASH_BIG_ENDIAN 0
+# else
+#  define HASH_LITTLE_ENDIAN 0
+#  define HASH_BIG_ENDIAN 0
+# endif
+#endif
 
 #define rot(x,k) (((x)<<(k)) ^ ((x)>>(32-(k))))
 
@@ -104,7 +120,8 @@ and these came close:
   c ^= b; c -= rot(b,24); \
 }
 
-uint32_t hashlittle(
+#if HASH_LITTLE_ENDIAN == 1
+uint32_t hash(
   const void *key,       /* the key to hash */
   size_t      length,    /* length of the key */
   const uint32_t    initval)   /* initval */
@@ -116,7 +133,7 @@ uint32_t hashlittle(
   a = b = c = 0xdeadbeef + ((uint32_t)length) + initval;
 
   u.ptr = key;
-  if ((u.i & 0x3) == 0) {
+  if (HASH_LITTLE_ENDIAN && ((u.i & 0x3) == 0)) {
     const uint32_t *k = key;                           /* read 32-bit chunks */
 #ifdef VALGRIND
     const uint8_t  *k8;
@@ -184,7 +201,7 @@ uint32_t hashlittle(
 
 #endif /* !valgrind */
 
-  } else if ((u.i & 0x1) == 0) {
+  } else if (HASH_LITTLE_ENDIAN && ((u.i & 0x1) == 0)) {
     const uint16_t *k = key;                           /* read 16-bit chunks */
     const uint8_t  *k8;
 
@@ -278,14 +295,14 @@ uint32_t hashlittle(
   return c;             /* zero length strings require no mixing */
 }
 
-
+#elif HASH_BIG_ENDIAN == 1
 /*
  * hashbig():
  * This is the same as hashword() on big-endian machines.  It is different
  * from hashlittle() on all machines.  hashbig() takes advantage of
  * big-endian byte ordering.
  */
-uint32_t hashbig( const void *key, size_t length, const uint32_t initval)
+uint32_t hash( const void *key, size_t length, const uint32_t initval)
 {
   uint32_t a,b,c;
   union { const void *ptr; size_t i; } u; /* to cast key to (size_t) happily */
@@ -294,7 +311,7 @@ uint32_t hashbig( const void *key, size_t length, const uint32_t initval)
   a = b = c = 0xdeadbeef + ((uint32_t)length) + initval;
 
   u.ptr = key;
-  if ((u.i & 0x3) == 0) {
+  if (HASH_BIG_ENDIAN && ((u.i & 0x3) == 0)) {
     const uint32_t *k = key;                           /* read 32-bit chunks */
 #ifdef VALGRIND
     const uint8_t  *k8;
@@ -408,3 +425,6 @@ uint32_t hashbig( const void *key, size_t length, const uint32_t initval)
   final(a,b,c);
   return c;
 }
+#else /* HASH_XXX_ENDIAN == 1 */
+#error Must define HASH_BIG_ENDIAN or HASH_LITTLE_ENDIAN
+#endif /* HASH_XXX_ENDIAN == 1 */
