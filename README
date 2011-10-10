@@ -1,7 +1,7 @@
-Cachismo is a sciptable object cache which can be used as an replacement for memcached.
-It supports memcache protocol (tcp and ascii only).
+Cachismo is a sciptable object cache which can be used as replacement for memcached
+and redis. It supports memcache protocol (tcp and ascii only). 
 
-- The best part of using cacheismo is that is it fully scriptable in lua.
+- The best part about using cacheismo is that is it fully scriptable in lua.
   Sample objects map, set, quota and sliding window counters written in lua can 
   be found in scripts directory. You could create your own objects and place them
   in the scripts directory. 
@@ -16,21 +16,27 @@ It supports memcache protocol (tcp and ascii only).
   See scripts/set.lua for other functions.  
   
   I call this approach virtual keys. Reason for using it .. you can use 
-  existing memcached libraries to access cacheismo. 
-
+  existing memcached libraries to access cacheismo.
+  
 Others reasons why you might want to use it.
 - Slab allocator used in memcache would waste memory if slab sizes and object
   sizes are not in sync. For example when using slab sizes of 64/128/256/512/1024 bytes
   object with size 513 is stored in 1024 bytes slab, wasting almost half the 
   memory. cashismo tries to maintain memory used by object as close as possible 
-  to the object size.
+  to the object size. No configuration is required, no tuning of slab sizes.  
 
 - True LRU support. memcache will evict items from the slab in which object will 
-  be placed. cachismo will always use the LRU, irrespective of the size. 
-  Every byte is reclaimable in cacheismo.
+  be placed. What this means is that memcache will remove objects from cache 
+  which are not truly the LRU objects in the cache. cachismo will always use 
+  the LRU, irrespective of the size. If sizes of objects in the cache is not 
+  fixed, it is either hard to estimate or changes over time, then you would see 
+  much better HIT rate with cacheismo compared to memcached.
   
- 
-Building - cacheismo depends on libevent and lua (luagit can also be used)   
+Building - cacheismo depends on libevent and lua (luagit can also be used) 
+         - intsall libevent and lua if not already present on your system.
+         - ./configure; make 
+         - binary is created in the src directory.
+  
 It is single threaded. Run multiple instances on multicore systems.
 
 Introduction: http://chakpak.blogspot.com/2011/09/introducing-cacheismo.html
