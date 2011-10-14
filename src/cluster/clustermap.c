@@ -9,6 +9,7 @@ typedef struct request_t {
 	struct request_t* pNext;
 	struct request_t* pPrev;
 	char*             key;
+	void*             keyContext;
     void*             luaContext;
 } request_t;
 
@@ -76,13 +77,14 @@ static void deleteRequest(request_t* pRequest) {
  * creates a request object which encapsulates all the information
  * necessary for making a request
  */
-static request_t*  createRequest(char* virtualKey, void* luaContext) {
+static request_t*  createRequest(char* virtualKey, void* luaContext, void* keyContext) {
 	request_t* pRequest = ALLOCATE_1(request_t);
 
 	IfTrue(pRequest, ERR, "Error allocating memory");
 	pRequest->key        = strdup(virtualKey);
 	IfTrue(pRequest->key, ERR, "Error copying key");
 	pRequest->luaContext = luaContext;
+	pRequest->keyContext = keyContext;
 	goto OnSuccess;
 OnError:
 	if (pRequest) {
@@ -108,7 +110,7 @@ static void connectionContextDelete(connectionContext_t* pContext, int move) {
 				listAddFirst(pServer->unassignedRequests, pRequest);
 			}else {
 				//report error
-				pCMap->resultHandler(pRequest->luaContext, pRequest->key,  -1,  NULL);
+				pCMap->resultHandler(pRequest->luaContext, pRequest->keyContext,  -1,  NULL);
 				deleteRequest(pRequest);
 			}
 		}
@@ -345,7 +347,7 @@ tryNext:
 			if (0 == strcmp(pRequest->key, key)) {
 				//we got the response for the key
 				LOG(DEBUG, "giving callback for success result");
-				pCM->resultHandler(pRequest->luaContext, pRequest->key, 0, value);
+				pCM->resultHandler(pRequest->luaContext, pRequest->keyContext, 0, value);
 				dataStreamDelete(value);
 				value    = 0;
 				fallocatorFree(pCContext->fallocator, key);
@@ -358,7 +360,7 @@ tryNext:
 				//the request for current key failed, so notify
 				LOG(DEBUG, "giving callback for fail result");
 
-				pCM->resultHandler(pRequest->luaContext, pRequest->key,  -1, NULL);
+				pCM->resultHandler(pRequest->luaContext, pRequest->keyContext,  -1, NULL);
 				deleteRequest(pRequest);
 				pRequest = 0;
 				//move on to the next key, may be its her response
@@ -389,7 +391,7 @@ tryNext:
 		//anything pending in the currentRequests..not found
 		while ((pRequest = listRemoveLast(pCContext->currentRequests)) != 0) {
 			//report error
-			pCM->resultHandler(pRequest->luaContext, pRequest->key, -1,  NULL);
+			pCM->resultHandler(pRequest->luaContext, pRequest->keyContext, -1,  NULL);
 			deleteRequest(pRequest);
 		}
 		// add this connections to free connections list
@@ -616,14 +618,14 @@ clusterMap_t clusterMapCreate(clusterMapResultHandler_t resultHandler) {
  *        - invalid arguments
  *        - other system limitations
  */
-int clusterMapGet(clusterMap_t clusterMap, void* luaContext,  char* server, char* key ) {
+int clusterMapGet(clusterMap_t clusterMap, void* luaContext,  void* keyContext, char* server, char* key ) {
 	clusterMapImpl_t* pCM         = CLUSTER_MAP(clusterMap);
 	request_t*        newRequest  = 0;
 	externalServer_t* pEServer    = 0;
 	int               returnValue = 0;
 
 	IfTrue(pCM && server && key &&  luaContext, ERR, "Null argument found");
-	newRequest = createRequest(key, luaContext);
+	newRequest = createRequest(key, luaContext, keyContext);
 	IfTrue(newRequest, ERR, "Error allocting memory for new request");
 
 	pEServer = mapGetElement(pCM->serverMap, server);

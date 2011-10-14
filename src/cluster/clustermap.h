@@ -27,12 +27,12 @@
 typedef void* clusterMap_t;
 
 //data is readOnly, create a copy for using it
-typedef void (*clusterMapResultHandler_t)(void* luaContext, char* key,
+typedef void (*clusterMapResultHandler_t)(void* luaContext, void* keyContext,
 		                           int status, dataStream_t data);
 
 clusterMap_t       clusterMapCreate(clusterMapResultHandler_t resultHandler);
 
 int                clusterMapGet(clusterMap_t clusterMap,
-					   void* luaContext, char* server, char* key);
+					   void* luaContext, void* keyContext, char* server, char* key);
 
 #endif /* CLUSTER_CLUSTERMAP_H_ */

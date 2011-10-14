@@ -393,6 +393,7 @@ static void usage() {
 	printf("-l    <ip address>             default <0.0.0.0>   \n");
 	printf("-d    <scripts directory>      default <./scripts> \n");
 	printf("-e    <enable virtual keys>    default <Disabled>  \n");
+	printf("-c    <enable cluster mode>    default <Disabled>  \n");
 	printf("-i    <IO Memory Cache in MB>  default <16MB>      \n");
 	printf("-v    <Log Level debug(0), info(1), warn(2), err(3)>   default <err(3)> \n");
 	exit(1);
