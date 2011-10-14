@@ -197,7 +197,7 @@ luaRunnable_t luaRunnableCreate(char* directory, int enableVirtualKey) {
 	luaopen_marshal(pRunnable->luaState, pRunnable->fallocator);
 	luaHashMapRegister(pRunnable->luaState);
 	luaCacheItemRegister(pRunnable->luaState);
-
+	luaCommandRegister(pRunnable->luaState);
 	luaConsistentRegister(pRunnable->luaState);
 
 	if (0 == loadDirectory(pRunnable, directory, enableVirtualKey)) {
