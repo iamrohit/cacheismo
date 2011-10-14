@@ -270,8 +270,8 @@ static const luaL_Reg command_methods[] = {
     {"writeString",    luaCommandWriteString},
     {"hasMultipleKeys",luaCommandHasMultipleKeys},
     {"getMultipleKeys",luaCommandGetMultipleKeys},
-  //  {"getFromServer",  luaCommandGetValueFromExternalServer},
-  //  {"getInParallel",  luaCommandGetMultipleValuesFromExternalServers},
+    {"getFromServer",  luaCommandGetValueFromExternalServer},
+    {"getInParallel",  luaCommandGetMultipleValuesFromExternalServers},
     {NULL, NULL}
 };
 
