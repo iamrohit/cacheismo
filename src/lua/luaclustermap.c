@@ -154,7 +154,6 @@ int luaCommandGetValueFromExternalServer(lua_State* L) {
 	server = strdup(luaServer);
 	IfTrue(server, WARN, "Out of memory copying server");
 
-	LOG(ERR, "context %p server %s key %s\n", context, server, key);
 	//current running thread is always present at the top of the
 	//main lua stack
 	context->threadRef    = luaL_ref(pRunnable->luaState, LUA_REGISTRYINDEX);
@@ -209,7 +208,6 @@ static multiContext_t* createMultiContextFromStack(lua_State* L) {
 	while (lua_next(L, -2))  {
 		lua_pushvalue(L, -2);
 		const char *serverName = lua_tostring(L, -1);
-		LOG(DEBUG, "Server Name %s", serverName);
 		if (lua_istable(L, -2)) {
 			lua_pushvalue(L, -2);
 			lua_pushnil(L);
@@ -217,9 +215,8 @@ static multiContext_t* createMultiContextFromStack(lua_State* L) {
 				lua_pushvalue(L, -2);
 				const char *arrayIndex = lua_tostring(L, -1);
 				const char *virtualKey = lua_tostring(L, -2);
-				LOG(DEBUG, " server %s index %s key %s", serverName, arrayIndex, virtualKey);
 				IfTrue(multiAddNewKey(pMContext, (char*)serverName, (char*)virtualKey),
-						ERR, "Error adding key to multiContext");
+						ERR, "Error adding key to multiContext %s %s %s", arrayIndex, virtualKey, serverName);
 				lua_pop(L, 2);
 			}
 			lua_pop(L, 1);
@@ -227,8 +224,6 @@ static multiContext_t* createMultiContextFromStack(lua_State* L) {
 			const char* virtualKey = lua_tostring(L, -2);
 			IfTrue(multiAddNewKey(pMContext, (char*)serverName, (char*)virtualKey),
 					ERR, "Error adding key to multicontext");
-			LOG(DEBUG, " server %s key %s", serverName, virtualKey);
-			//stackdump(L);
 		}
 		lua_pop(L, 2);
 	}
@@ -278,15 +273,9 @@ int luaCommandGetMultipleValuesFromExternalServers(lua_State* L) {
 
 	IfTrue(context, ERR, "Null context from lua stack");
 	IfTrue(!context->multiContext, ERR, "MultiContext not Null in the lua context");
-	pRunnable = context->runnable;
-	LOG(DEBUG, "Before creating the context");
-	//stackdump(L);
-	context->multiContext = createMultiContextFromStack(L);
-	LOG(DEBUG, "After creating the context");
-	//stackdump(L);
 
-	LOG(DEBUG, "Main thread stack");
-	//stackdump(pRunnable->luaState);
+	pRunnable = context->runnable;
+	context->multiContext = createMultiContextFromStack(L);
 	context->threadRef = luaL_ref(pRunnable->luaState, LUA_REGISTRYINDEX);
 
 	LOG(DEBUG, "Trying to submit %d parallel requests threadref %d ", context->multiContext->total, context->threadRef);
@@ -297,6 +286,7 @@ int luaCommandGetMultipleValuesFromExternalServers(lua_State* L) {
 		while (pKeyValue != 0) {
 			result = clusterMapGet(pRunnable->clusterMap, context, pKeyValue, pServerEntry->serverName, pKeyValue->key);
 			if (result != 0) {
+				LOG(INFO, "Error submitting request for key %s to server %s", pKeyValue->key, pServerEntry->serverName);
 				//we will not get that many callbacks
 				context->multiContext->received++;
 			}
@@ -305,7 +295,7 @@ int luaCommandGetMultipleValuesFromExternalServers(lua_State* L) {
 		pServerEntry = listGetNext(context->multiContext->serverList, pServerEntry);
 	}
 	if (context->multiContext->total <= context->multiContext->received) {
-		LOG(ERR, "we were not able to submit even a single request..");
+		LOG(ERR, "We were not able to submit even a single request..");
 		goto OnError;
 	}
 	goto OnSuccess;
@@ -331,30 +321,22 @@ OnSuccess:
 		//we do a yield, nothing on the stack
 		//this for the script to stop execution
 		//and return result to driver.c
-		LOG(DEBUG, "just before yield");
-		//stackdump(L);
 		return lua_yield (L, 0);
 	}
 }
 
 static void pushMultiResultOnStack(lua_State* L, multiContext_t* pMContext) {
-	LOG(DEBUG, "multi case.. stack initial ");
-	//stackdump(L);
 	int n = listGetSize(pMContext->serverList);
-	LOG(DEBUG, "number of servers %d", n);
 	lua_createtable(L, 0, n);
 	serverEntry_t* pServerEntry = listGetFirst(pMContext->serverList);
 	keyValue_t*    pKeyValue    = 0;
 
 	while (pServerEntry) {
-		LOG(DEBUG, "current server  %s", pServerEntry->serverName);
 		lua_pushstring(L, pServerEntry->serverName);
 		int noofkeys = listGetSize(pServerEntry->keyValueList);
-		LOG(DEBUG, "no of keys  %d", noofkeys);
 		lua_createtable(L, 0, noofkeys);
 		pKeyValue = listGetFirst(pServerEntry->keyValueList);
 		while (pKeyValue) {
-			LOG(DEBUG, "Adding key %s", pKeyValue->key);
 			lua_pushstring(L, pKeyValue->key);
 			if (pKeyValue->value && (pKeyValue->length > 0)) {
 				lua_pushlstring(L, pKeyValue->value, pKeyValue->length);
@@ -367,8 +349,6 @@ static void pushMultiResultOnStack(lua_State* L, multiContext_t* pMContext) {
 		lua_settable(L, -3);
 		pServerEntry = listGetNext(pMContext->serverList, pServerEntry);
 	}
-	LOG(DEBUG, "multi case.. stack final ");
-	//stackdump(L);
 }
 
 
@@ -378,10 +358,7 @@ void clusterMapResultHandler(void* luaContext, void* keyContext, int status, dat
 	int                result    = 0;
 	int                multi    = 0;
 
-	LOG(DEBUG, "Got callback status %d keyContext %p", status, keyContext);
 	if (keyContext && pContext->multiContext) {
-		LOG(DEBUG, "Handling multi request callback");
-
 		multi = 1;
 		keyValue_t* pKeyValue = (keyValue_t*)keyContext;
 
@@ -401,25 +378,18 @@ void clusterMapResultHandler(void* luaContext, void* keyContext, int status, dat
 			pKeyValue->value = 0;
 		}
 		pContext->multiContext->received++;
-		LOG(DEBUG, "Total %d recieved %d", pContext->multiContext->total,  pContext->multiContext->received);
 		if (pContext->multiContext->total > pContext->multiContext->received) {
 			return;
 		}
 	}
 
-	LOG (DEBUG, "thread ref value from context %d", pContext->threadRef);
 	lua_rawgeti(pRunnable->luaState, LUA_REGISTRYINDEX, pContext->threadRef);
 	luaL_unref(pRunnable->luaState, LUA_REGISTRYINDEX, pContext->threadRef);
 	pContext->threadRef = LUA_NOREF;
 
 	lua_State*  localLuaState = lua_tothread(pRunnable->luaState, -1);
-	LOG(DEBUG, "main stack after restoring thread");
-	//stackdump(pRunnable->luaState);
-	LOG(DEBUG, "thread stack after restoring thread");
-	//stackdump(localLuaState);
 	//setup stack
 	if (!multi) {
-		LOG(DEBUG, "Non multi case");
 		if (status == 0) {
 			int   length = dataStreamGetSize(data);
 			char* buffer = dataStreamToString(data);
@@ -433,7 +403,6 @@ void clusterMapResultHandler(void* luaContext, void* keyContext, int status, dat
 			lua_pushnil(localLuaState);
 		}
 	}else {
-		LOG(DEBUG, "multi case...populate the stack");
 		//setup stack for the multi case
 		pushMultiResultOnStack(localLuaState, pContext->multiContext);
 		multiContextDelete(pContext->multiContext);

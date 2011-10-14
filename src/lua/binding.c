@@ -291,44 +291,22 @@ int luaRunnableRun(luaRunnable_t runnable, connection_t connection, fallocator_t
 		stackdump(pRunnable->luaState);
 	}
 	luaCommandNew(localLuaState, connection, fallocator, pCommand, pRunnable);
-	LOG(ERR, "stackdump for local thread befor resume");
- 			stackdump(localLuaState);
-	LOG(ERR, "stackdump for main thread befor resume");
-				stackdump(pRunnable->luaState);
-
     result = lua_resume(localLuaState, 1);
-
  	if (result != 0) {
- 		LOG(ERR, "Result value not zero %d", result);
  		//this can only happen for getFromServer call
  		if (result == LUA_YIELD) {
- 			LOG(ERR, "Yield from thread ");
- 			stackdump(localLuaState);
  			return 1;
  		}else {
- 			LOG(ERR, "Eror from thread %d", result);
  			LOG(ERR, "lua_resume failed  [%s]", lua_tostring(localLuaState,-1));
- 			LOG(ERR, "stackdump for local thread");
- 			stackdump(localLuaState);
- 			LOG(ERR, "stackdump for main thread");
- 			stackdump(pRunnable->luaState);
  			result = -1;
  		}
 	}else {
-		LOG(ERR, "return value from resume %d", result);
 		result = lua_tointeger(localLuaState, -1);
-		LOG(ERR, "return value on stack %d", result);
-		LOG(ERR, "stackdump for local thread");
-		stackdump(localLuaState);
 		lua_remove(localLuaState, lua_gettop(localLuaState));
 		if (result != 0) {
 			LOG(WARN, "main lua function returned error %d", result);
 		}
-		LOG(ERR, "stackdump for main thread before poping out thread");
-			stackdump(pRunnable->luaState);
 	}
 	lua_remove(pRunnable->luaState, lua_gettop(pRunnable->luaState));
-	LOG(ERR, "stackdump for main thread");
-	stackdump(pRunnable->luaState);
 	return result;
 }
