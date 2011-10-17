@@ -563,7 +563,7 @@ u_int32_t hashMapGetPrefixMatchingKeys(hashMap_t hashMap, char* prefix, char** k
 
     IfTrue(result, ERR, "Error allocating memory");
 
-    for (int i = 0; i < pHashMap->size; i++) {
+    for (int i = 0; i < hashmask(pHashMap->maskedBits+1); i++) {
     	pElement  = pHashMap->pBuckets[i];
         while (pElement) {
         	int   length = pHashMap->API->getKeyLength(pElement->value);
