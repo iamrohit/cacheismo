@@ -544,3 +544,69 @@ OnError:
 OnSuccess:
     return 0;
 }
+
+#define DEFAULT_RESULT_SIZE 4096
+
+u_int32_t hashMapGetPrefixMatchingKeys(hashMap_t hashMap, char* prefix, char** keys) {
+    hashMapImpl_t* pHashMap     = HASHMAPIMPL(hashMap);
+    hashEntry_t*   pElement     = 0;
+    u_int32_t      count        = 0;
+    char*          result       = 0;
+    int            resultSize   = DEFAULT_RESULT_SIZE;
+    int            resultUsed   = 0;
+    int            prefixLength = 0;
+
+    IfTrue(pHashMap, ERR,  "Null argument");
+    IfTrue(keys && prefix, INFO, "Invalid argument");
+    prefixLength = strlen(prefix);
+    result       = ALLOCATE_N(resultSize, char);
+
+    IfTrue(result, ERR, "Error allocating memory");
+
+    for (int i = 0; i < pHashMap->size; i++) {
+    	pElement  = pHashMap->pBuckets[i];
+        while (pElement) {
+        	int   length = pHashMap->API->getKeyLength(pElement->value);
+            char* key    = pHashMap->API->getKey(pElement->value);
+            if (length >= prefixLength) {
+            	if (0 == memcmp(key, prefix, prefixLength)) {
+            		LOG(DEBUG, "Key %s matches prefix %s", key, prefix);
+            		if ((resultSize - resultUsed) < (length+1)) {
+                        char* newResult = realloc(result, resultSize * 2);
+                        IfTrue(newResult, ERR, "Error allocating memory");
+                        result = newResult;
+                        memset(result+resultSize, 0, resultSize);
+                        resultSize = resultSize * 2;
+            		}
+            		LOG(DEBUG, "writing key at offset %d total %d", resultUsed, resultSize)
+					memcpy(result+resultUsed, key, length);
+					result[resultUsed+length] = 0;
+					resultUsed+= length+1;
+					count++;
+            	}else {
+            		LOG(DEBUG, "Key %s doesn't matches prefix %s", key, prefix);
+            	}
+            }
+            pElement = pElement->pMapNext;
+        }
+    }
+    goto OnSuccess;
+OnError:
+    count = 0;
+    if (result) {
+    	FREE(result);
+    	result = 0;
+    }
+OnSuccess:
+	if (count == 0) {
+		if (result) {
+			FREE(result);
+			result = 0;
+		}
+	}
+	if (keys) {
+		*keys = result;
+	}
+    return count;
+}
+

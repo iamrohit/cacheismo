@@ -2,6 +2,7 @@
 #define HASHMAP_HASHMAP_H_
 
 #include "../common/common.h"
+#include "../common/list.h"
 #include "hashentry.h"
 
 typedef void* hashMap_t;
@@ -14,5 +15,6 @@ int            hashMapDeleteElement(hashMap_t hashMap, char* key, u_int32_t  key
 u_int32_t      hashMapDeleteExpired(hashMap_t hashMap);
 u_int64_t      hashMapDeleteLRU(hashMap_t hashMap, u_int64_t requiredSpace);
 u_int32_t      hashMapSize(hashMap_t hashMap);
+u_int32_t      hashMapGetPrefixMatchingKeys(hashMap_t hashMap, char* prefix, char** keys);
 
 #endif //HASHMAP_HASHMAP_H_

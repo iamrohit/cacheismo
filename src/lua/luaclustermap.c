@@ -162,7 +162,7 @@ int luaCommandGetValueFromExternalServer(lua_State* L) {
 		context->multiContext = 0;
 	}
 
-	IfTrue(0 == clusterMapGet(pRunnable->clusterMap, context, NULL, server, key),
+	IfTrue(0 >  clusterMapGet(pRunnable->clusterMap, context, NULL, server, key),
 			WARN, "Error submitting request to clusterMap");
 
 	goto OnSuccess;
@@ -285,7 +285,7 @@ int luaCommandGetMultipleValuesFromExternalServers(lua_State* L) {
 		pKeyValue = listGetFirst(pServerEntry->keyValueList);
 		while (pKeyValue != 0) {
 			result = clusterMapGet(pRunnable->clusterMap, context, pKeyValue, pServerEntry->serverName, pKeyValue->key);
-			if (result != 0) {
+			if (result < 0) {
 				LOG(INFO, "Error submitting request for key %s to server %s", pKeyValue->key, pServerEntry->serverName);
 				//we will not get that many callbacks
 				context->multiContext->received++;

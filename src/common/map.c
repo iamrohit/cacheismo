@@ -167,7 +167,7 @@ OnSuccess:
 void* mapGetElement(map_t hashMap, char* key) {
     hashMapImpl_t* pHashMap  = HASHMAPIMPL(hashMap);
     hashEntry_t*   pElement  = 0;
-    hashEntry_t*   pPrev     = 0;
+   // hashEntry_t*   pPrev     = 0;
     u_int32_t      hashValue = 0;
     u_int32_t      bucket    = 0;
     u_int32_t      keyLength = 0;
@@ -187,7 +187,7 @@ void* mapGetElement(map_t hashMap, char* key) {
                 /* match found */
              break;
         }
-        pPrev    = pElement;
+        //pPrev    = pElement;
         pElement = pElement->pMapNext;
     }
     goto OnSuccess;

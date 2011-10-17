@@ -1,4 +1,5 @@
 AC_PREREQ(2.52)
+AC_CONFIG_MACRO_DIR([m4])
 m4_include([m4/c99-backport.m4])
 AC_INIT(cacheismo, 0.1, cacheismo@googlegroups.com)
 AC_CANONICAL_SYSTEM
@@ -213,14 +214,19 @@ AC_DEFUN([SNOGRAY_CHECK_SUBDIR_HEADER], [
     AC_MSG_RESULT([$_snogray_check_subdir_header_result])
 ])
 
+AC_SEARCH_LIBS(dlopen, dl)
+AC_SEARCH_LIBS(floor, m)
 
-PKG_CHECK_MODULES([liblua], [lua5.1], [have_liblua=yes], [:])
+#check if lua is installed at system level
+PKG_CHECK_MODULES([liblua], [lua lua5.1], [have_liblua=yes], [have_liblua=no] [:])
+AC_MSG_RESULT([$have_liblua not found in /usr/lib])
 
 if test $have_liblua = no; then
+  AC_MSG_CHECKING([liblua not found in /usr/lib checking elsewhere])
   AC_LANG_PUSH(C)
   have_lua_h=no
   lua_include_flags=""
-  AC_CHECK_HEADER([lua.h], [have_lua_h=yes])
+  AC_CHECK_HEADER([lua.h], [have_lua_h=yes], [have_lua_h=no])
   if test $have_lua_h = no; then
     SNOGRAY_CHECK_SUBDIR_HEADER(
        [lua_include_dir], [<lua.h>],
@@ -229,7 +235,8 @@ if test $have_liblua = no; then
   fi
   if test $have_lua_h = yes; then
     for lua_lib_name in lua lua5.1 lua-5.1 lua51; do
-      AC_CHECK_LIB([$lua_lib_name], [lua_close], [have_liblua=yes], [have_liblua=no], [-lm])
+      AC_MSG_CHECKING([checking lua lib])
+      AC_CHECK_LIB([$lua_lib_name], [lua_close], [have_liblua=yes], [have_liblua=no], [-lm -ldl])
       if test $have_liblua = yes; then
 	AC_SUBST([liblua_CFLAGS], ["$lua_include_flags"])
 	AC_SUBST([liblua_LIBS], ["-l$lua_lib_name"])
@@ -251,7 +258,7 @@ if test $have_liblua = yes; then
   have_libluajit=no
   luajit_lib_name="luajit-5.1"
 #  disabling this for now  
-#  AC_CHECK_LIB([$luajit_lib_name], [lua_close], [have_libluajit=yes], [:], [-lm])
+  AC_CHECK_LIB([$luajit_lib_name], [lua_close], [have_libluajit=yes], [have_libluajit=no], [:], [-lm -ldl])
   if test $have_libluajit = yes; then
     AC_SUBST([liblua_LIBS], ["-l$luajit_lib_name"])
   fi
@@ -262,8 +269,6 @@ AM_CONDITIONAL([have_liblua], [test $have_liblua = yes])
 
 AC_SEARCH_LIBS(socket, socket)
 AC_SEARCH_LIBS(gethostbyname, nsl)
-AC_SEARCH_LIBS(dlopen, dl)
-AC_SEARCH_LIBS(floor, m)
 AC_CHECK_FUNCS([clock_gettime], [rt])
 
 AC_HEADER_STDBOOL

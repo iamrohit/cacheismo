@@ -15,7 +15,7 @@
 *.scan
 Makefile
 Makefile.in
-cacheismo
+src/cacheismo
 
 #Links 
 INSTALL
@@ -28,7 +28,6 @@ config.sub
 aclocal.m4
 compile
 autom4te.cache
-configure
 depcomp
 install-sh
 libtool 

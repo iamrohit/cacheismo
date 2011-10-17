@@ -45,12 +45,45 @@ static int luaHashMapDeleteLRU(lua_State* L) {
 	return 0;
 }
 
+static int luaHashMapGetPrefixMatchingKeys(lua_State* L) {
+	hashMap_t*   pHashMap = (hashMap_t*)lua_touserdata(L, 1);
+	size_t l;
+	const char *s = luaL_checklstring(L, -1, &l);
+	if (s && l > 0) {
+		u_int32_t count = 0;
+		char*     keys  = 0;
+		count = hashMapGetPrefixMatchingKeys(*pHashMap, (char*)s, &keys);
+		LOG(DEBUG, "Got %d keys matching prefix %s", count, s);
+		if (count > 0) {
+			lua_createtable(L, count, 0);
+			int newTable = lua_gettop(L);
+			int index    = 1;
+			int offset   = 0;
+			while (count--) {
+				char* key = keys+offset;
+				int length = strlen(key);
+				LOG(DEBUG, "Adding key %s to lua table.. offset %d", key, offset);
+				lua_pushlstring(L, key, length);
+				lua_rawseti(L, newTable, index);
+				index++;
+				offset += length + 1;
+			}
+			FREE(keys);
+		}else {
+			lua_pushnil(L);
+		}
+	}else {
+		lua_pushnil(L);
+	}
+	return 1;
+}
 
 static const luaL_Reg hashmap_methods[] = {
     {"get",       luaHashMapGet},
     {"put",       luaHashMapPut},
     {"delete",    luaHashMapDelete},
     {"deleteLRU", luaHashMapDeleteLRU},
+    {"getPrefixMatchingKeys", luaHashMapGetPrefixMatchingKeys},
     {NULL, NULL}
 };
 
