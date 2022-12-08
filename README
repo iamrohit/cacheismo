@@ -1,3 +1,5 @@
+[![BookMyTime](http://bookmytime.dev/api/project/exXbREFsgPwmOAqfSeRM/button)](http://bookmytime.dev/book/exXbREFsgPwmOAqfSeRM)
+
 Cacheismo is a sciptable object cache which can be used as replacement for memcached
 and redis. It supports memcache protocol (tcp and ascii only). 
 
